@@ -8,16 +8,8 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import os
-import psycopg2
-from urllib.parse import urlparse
 
-import os
-import psycopg2
-from urllib.parse import urlparse
-
-
-# render database url
+# PostgreSQL connection setup
 DB_CONFIG = {
     'dbname': 'algdcatsitterdb',
     'user': 'algdcatsitter',
@@ -48,12 +40,6 @@ def initialize_db():
     conn.close()
 
 initialize_db()
-
-
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
-# Add server start --> 
-server = app.server
 
 # Load records from PostgreSQL
 def load_records():
@@ -162,14 +148,14 @@ def generate_monthly_income_chart():
         barmode="stack",
         template="simple_white",
         margin={"t": 40, "b": 30},
-        xaxis=dict(
-            tickformat="%Y-%m",  # 使用年份-月份格式
-            type="category"      # 确保按照字符串顺序展示
-        ),
     )
     return fig
 
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# Add server start 
+server = app.server
 app.title = "阿里嘎多猫咪寄养"
+
 app.layout = dbc.Container([
     dbc.Row([
         dbc.Col(html.H1("猫咪寄养记账软件", className="text-center mb-4"), width=12)
@@ -294,10 +280,13 @@ def toggle_days_input(service_type, start_date, end_date):
 def update_table_and_chart(n_clicks, data_previous, table_data, start_date, end_date, cat_name, service_type, unit_price, days):
     ctx = dash.callback_context
 
-    # Handle adding new record
+    # Add loading spinner
+    from dash import no_update
+    from dash.exceptions import PreventUpdate
+
     if ctx.triggered and ctx.triggered[0]["prop_id"] == "add_record.n_clicks":
         if not (start_date and end_date and cat_name and service_type and unit_price):
-            return table_data, generate_monthly_income_chart()
+            raise PreventUpdate
 
         total_amount = float(unit_price) * int(days)
         new_record = {
@@ -313,7 +302,6 @@ def update_table_and_chart(n_clicks, data_previous, table_data, start_date, end_
         save_record(new_record)
         table_data.append(new_record)
 
-    # Handle row deletion
     if data_previous:
         current_df = pd.DataFrame(table_data)
         previous_df = pd.DataFrame(data_previous)
