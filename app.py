@@ -3,44 +3,96 @@ from dash import Dash, html, dcc, Input, Output, State
 from dash.dependencies import ALL
 from dash.dash_table import DataTable
 import pandas as pd
-import os
 from datetime import datetime, timedelta
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import os
+import psycopg2
+from urllib.parse import urlparse
+
+import os
+import psycopg2
+from urllib.parse import urlparse
+
+
+# render database url
+DB_CONFIG = {
+    'dbname': 'algdcatsitterdb',
+    'user': 'algdcatsitter',
+    'password': 'rxehxlXDLxwMTvN7mIUS6yyMZNfZPMpB',
+    'host': 'dpg-ctr27n9opnds73fo25ag-a.singapore-postgres.render.com',
+    'port': 5432
+}
+
+# Initialize PostgreSQL table
+def initialize_db():
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS cat_sitting_records (
+            id SERIAL PRIMARY KEY,
+            start_date DATE,
+            end_date DATE,
+            cat_name TEXT,
+            service_type TEXT,
+            unit_price NUMERIC,
+            days INTEGER,
+            total_amount NUMERIC,
+            remarks TEXT
+        );
+    ''')
+    conn.commit()
+    cur.close()
+    conn.close()
+
+initialize_db()
+
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-# Add server start
-server = app.server
 
-# File to store records
-CSV_FILE = "cat_sitting_records.csv"
-
-# Initialize CSV if it doesn't exist
-def initialize_csv():
-    if not os.path.exists(CSV_FILE):
-        df = pd.DataFrame(columns=["Start Date", "End Date", "Cat Name", "Service Type", "Unit Price", "Days", "Total Amount", "Remarks"])
-        df.to_csv(CSV_FILE, index=False)
-
-initialize_csv()
-
-# Load records from CSV
+# Load records from PostgreSQL
 def load_records():
-    return pd.read_csv(CSV_FILE)
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute('SELECT * FROM cat_sitting_records ORDER BY id;')
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return pd.DataFrame(rows)
 
-# Save all records to CSV
-def save_all_records(data):
-    df = pd.DataFrame(data)
-    df.to_csv(CSV_FILE, index=False)
+# Save a new record to PostgreSQL
+def save_record(record):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO cat_sitting_records (start_date, end_date, cat_name, service_type, unit_price, days, total_amount, remarks)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    ''', (record['Start Date'], record['End Date'], record['Cat Name'], record['Service Type'],
+          record['Unit Price'], record['Days'], record['Total Amount'], record['Remarks']))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# Delete a record from PostgreSQL
+def delete_record(record_id):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    cur.execute('DELETE FROM cat_sitting_records WHERE id = %s;', (record_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # Helper function to calculate monthly income for cross-month records by service type
 def calculate_monthly_income_by_type(df):
     income_data = []
 
     for _, row in df.iterrows():
-        start_date = pd.to_datetime(row["Start Date"])
-        end_date = pd.to_datetime(row["End Date"])
-        unit_price = row["Unit Price"]
-        service_type = row["Service Type"]
+        start_date = pd.to_datetime(row["start_date"])
+        end_date = pd.to_datetime(row["end_date"])
+        unit_price = row["unit_price"]
+        service_type = row["service_type"]
 
         current_date = start_date
         while current_date <= end_date:
@@ -71,9 +123,9 @@ def generate_monthly_income_chart():
     if df.empty:
         return go.Figure()
 
-    df["Start Date"] = pd.to_datetime(df["Start Date"], errors="coerce")
-    df["End Date"] = pd.to_datetime(df["End Date"], errors="coerce")
-    df = df.dropna(subset=["Start Date", "End Date", "Unit Price", "Service Type"])
+    df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
+    df["end_date"] = pd.to_datetime(df["end_date"], errors="coerce")
+    df = df.dropna(subset=["start_date", "end_date", "unit_price", "service_type"])
 
     monthly_income = calculate_monthly_income_by_type(df)
 
@@ -86,8 +138,6 @@ def generate_monthly_income_chart():
             x=filtered_data["YearMonth"],
             y=filtered_data["Income"],
             name=service_type,
-            text=filtered_data["Income"],
-            textposition="auto",
             marker_color=COLORS[service_type]
         ))
 
@@ -103,16 +153,16 @@ def generate_monthly_income_chart():
     ))
 
     fig.update_layout(
-        xaxis=dict(
-            tickformat="%Y-%m",  # 使用年份-月份格式
-            type="category"      # 确保按照字符串顺序展示
-        ),
         title="每月总收入（分服务类别）",
         xaxis_title="月份",
         yaxis_title="总收入 (澳币)",
         barmode="stack",
         template="simple_white",
         margin={"t": 40, "b": 30},
+        xaxis=dict(
+            tickformat="%Y-%m",  # 使用年份-月份格式
+            type="category"      # 确保按照字符串顺序展示
+        ),
     )
     return fig
 
@@ -168,14 +218,14 @@ app.layout = dbc.Container([
             DataTable(
                 id="records_table",
                 columns=[
-                    {"name": "开始日期", "id": "Start Date", "editable": True},
-                    {"name": "结束日期", "id": "End Date", "editable": True},
-                    {"name": "猫咪名字", "id": "Cat Name", "editable": True},
-                    {"name": "服务类型", "id": "Service Type", "editable": True},
-                    {"name": "单价 (澳币/天)", "id": "Unit Price", "editable": True},
-                    {"name": "天数", "id": "Days", "editable": True},
-                    {"name": "总金额 (澳币)", "id": "Total Amount", "editable": False},
-                    {"name": "备注", "id": "Remarks", "editable": True}
+                    {"name": "开始日期", "id": "start_date", "editable": True},
+                    {"name": "结束日期", "id": "end_date", "editable": True},
+                    {"name": "猫咪名字", "id": "cat_name", "editable": True},
+                    {"name": "服务类型", "id": "service_type", "editable": True},
+                    {"name": "单价 (澳币/天)", "id": "unit_price", "editable": True},
+                    {"name": "天数", "id": "days", "editable": True},
+                    {"name": "总金额 (澳币)", "id": "total_amount", "editable": False},
+                    {"name": "备注", "id": "remarks", "editable": True}
                 ],
                 data=load_records().to_dict("records"),
                 editable=True,
@@ -187,17 +237,17 @@ app.layout = dbc.Container([
                 style_header={"backgroundColor": "#f8f9fa", "fontWeight": "bold"},
                 style_data_conditional=[
                     {
-                        "if": {"filter_query": "{Service Type} = '普通寄养'"},
+                        "if": {"filter_query": "{service_type} = '普通寄养'"},
                         "backgroundColor": COLORS["普通寄养"],
                         "color": "black"
                     },
                     {
-                        "if": {"filter_query": "{Service Type} = '单间寄养'"},
+                        "if": {"filter_query": "{service_type} = '单间寄养'"},
                         "backgroundColor": COLORS["单间寄养"],
                         "color": "black"
                     },
                     {
-                        "if": {"filter_query": "{Service Type} = '上门喂养'"},
+                        "if": {"filter_query": "{service_type} = '上门喂养'"},
                         "backgroundColor": COLORS["上门喂养"],
                         "color": "black"
                     }
@@ -256,6 +306,7 @@ def update_table_and_chart(n_clicks, data_previous, table_data, start_date, end_
             "Total Amount": total_amount,
             "Remarks": ""
         }
+        save_record(new_record)
         table_data.append(new_record)
 
     # Handle row deletion
@@ -263,14 +314,11 @@ def update_table_and_chart(n_clicks, data_previous, table_data, start_date, end_
         current_df = pd.DataFrame(table_data)
         previous_df = pd.DataFrame(data_previous)
         deleted_rows = pd.concat([previous_df, current_df]).drop_duplicates(keep=False)
-        if not deleted_rows.empty:
-            df = load_records()
-            df = pd.concat([df, deleted_rows]).drop_duplicates(keep=False)
-            df.to_csv(CSV_FILE, index=False)
+        for _, row in deleted_rows.iterrows():
+            delete_record(row["id"])
 
-    # Save updated table data to CSV
-    save_all_records(table_data)
-    return table_data, generate_monthly_income_chart()
+    updated_data = load_records().to_dict("records")
+    return updated_data, generate_monthly_income_chart()
 
 if __name__ == "__main__":
     app.run_server(debug=True)

@@ -3,3 +3,4 @@ gunicorn
 pandas
 plotly
 dash_bootstrap_components
+psycopg2-binary==2.9.7
