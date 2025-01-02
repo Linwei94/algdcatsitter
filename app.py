@@ -52,6 +52,9 @@ initialize_db()
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
+# Add server start --> 
+server = app.server
+
 # Load records from PostgreSQL
 def load_records():
     conn = psycopg2.connect(**DB_CONFIG)
@@ -166,6 +169,7 @@ def generate_monthly_income_chart():
     )
     return fig
 
+app.title = "阿里嘎多猫咪寄养"
 app.layout = dbc.Container([
     dbc.Row([
         dbc.Col(html.H1("猫咪寄养记账软件", className="text-center mb-4"), width=12)
